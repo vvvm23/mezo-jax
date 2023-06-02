@@ -35,6 +35,24 @@ def mezo_grad(loss_fn):
     return _mezo_grad
 
 
+# TODO: only value is the loss itself, take the average
+def mezo_value_and_grad(loss_fn):
+    @wraps(loss_fn)
+    def _mezo_value_and_grad(params, scale, mezo_key, *args, **kwargs):
+        params = perturb_parameters(params, scale, mezo_key)
+        loss_pos = loss_fn(params, *args, **kwargs)
+
+        params = perturb_parameters(params, -2 * scale, mezo_key)
+        loss_neg = loss_fn(params, *args, **kwargs)
+
+        params = perturb_parameters(params, scale, mezo_key)
+        grad = (loss_pos - loss_neg) / (2 * scale)
+
+        return (loss_pos + loss_neg) / 2, grad
+
+    return _mezo_value_and_grad
+
+
 if __name__ == "__main__":
     import jax.numpy as jnp
 
