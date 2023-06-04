@@ -39,11 +39,14 @@ def load_pretrained_model(name: str = "bert-base-cased", num_labels: int = 5):
 
 def main(args):
     seed = 0xFFFF
-    lr = 1e-6
-    scale = 1e-4
+    lr = 1e-4
+    scale = 1e-3
     epochs = 3
-    batch_size = 32
+    batch_size = 128
     num_workers = 8
+
+    use_mezo = True
+    use_bfloat16 = True
 
     key = jax.random.PRNGKey(seed)
     tokenizer = load_tokenizer()
@@ -51,37 +54,50 @@ def main(args):
     model = load_pretrained_model()
 
     params = model.params
-    parmas = jax.tree_map(lambda p: jnp.asarray(p, dtype=jnp.bfloat16), params)
+    if use_bfloat16:
+        params = jax.tree_map(lambda p: jnp.asarray(p, dtype=jnp.bfloat16), params)
 
     def loss_fn(params, batch, labels):
         outputs = model(**batch, params=params)
-        loss = optax.softmax_cross_entropy_with_integer_labels(outputs.logits, labels).mean()
+        loss = optax.softmax_cross_entropy_with_integer_labels(
+            jnp.asarray(outputs.logits, dtype=jnp.float32), labels
+        ).mean()
         accuracy = (outputs.logits.argmax(axis=-1) == labels).mean()
 
         return loss, accuracy
 
-    grad_loss_fn = mezo_value_and_grad(loss_fn, has_aux=True)
+    if use_mezo:
+        grad_loss_fn = mezo_value_and_grad(loss_fn, has_aux=True)
+    else:
+        grad_loss_fn = jax.value_and_grad(loss_fn, has_aux=True)
 
     @jax.jit
     def train_step(params, batch, mezo_key):
         labels = batch.pop("label")
-        (loss, accuracy), grad = grad_loss_fn(params, scale, mezo_key, batch, labels)
-        scaled_grad = lr * grad
-        return loss, apply_updates(params, scaled_grad, mezo_key), accuracy
+        if use_mezo:
+            (loss, accuracy), grad = grad_loss_fn(params, scale, mezo_key, batch, labels)
+            scaled_grad = lr * grad
+            return loss, apply_updates(params, scaled_grad, mezo_key), accuracy
+        else:
+            (loss, accuracy), grad = grad_loss_fn(params, batch, labels)
+            return loss, jax.tree_map(lambda p, u: p - lr * u, params, grad), accuracy
 
     pb = tqdm(range(epochs * len(train_dataloader)))
 
     total_loss, total_accuracy = 0.0, 0.0
     steps = 0
     freq = 10
+
+    key, subkey = jax.random.split(key)
     for _ in range(epochs):
         for batch in train_dataloader:
+            batch = overfit_batch
             key, subkey = jax.random.split(key)
             batch = {k: v.numpy() for k, v in batch.items()}
             loss, params, accuracy = train_step(params, batch, subkey)
 
-            total_loss += loss
-            total_accuracy += accuracy
+            total_loss += loss.item()
+            total_accuracy += accuracy.item()
             if steps % freq == 0:
                 pb.set_description(f"loss: {total_loss / freq} ~ accuracy: {100 * total_accuracy / freq}")
                 total_loss = 0.0
@@ -92,4 +108,5 @@ def main(args):
 
 
 if __name__ == "__main__":
+    # TODO: add proper argument handling
     main(None)
