@@ -13,18 +13,28 @@ from mezo_jax import apply_updates, mezo_value_and_grad
 # Mostly following this tutorial https://huggingface.co/docs/transformers/training
 
 
-def load_tokenizer(name: str = "bert-base-cased"):
+def load_tokenizer(name: str = "roberta-large"):
     tokenizer = AutoTokenizer.from_pretrained(name)
     return tokenizer
 
 
-def load_dataset(tokenizer: AutoTokenizer, name: str = "yelp_review_full", batch_size: int = 16, num_workers: int = 4):
-    dataset = datasets.load_dataset(name)
+def load_dataset(
+    tokenizer: AutoTokenizer,
+    name: str = ("glue", "cola"),
+    batch_size: int = 16,
+    num_workers: int = 4,
+    max_length: Optional[int] = 128,
+):
+    if max_length is None:
+        max_length = tokenizer.max_length
+    if isinstance(name, str):
+        name = (name,)
+    dataset = datasets.load_dataset(*name)
 
     def tokenize_function(examples):
-        return tokenizer(examples["text"], padding="max_length", truncation=True)
+        return tokenizer(examples["sentence"], padding="max_length", truncation=True, max_length=max_length)
 
-    dataset = dataset.map(tokenize_function, batched=True, remove_columns=["text"])
+    dataset = dataset.map(tokenize_function, batched=True, remove_columns=["sentence", "idx"])
     dataset.set_format("torch")
 
     train_dataloader = DataLoader(dataset["train"], shuffle=True, batch_size=batch_size, num_workers=num_workers)
@@ -33,16 +43,16 @@ def load_dataset(tokenizer: AutoTokenizer, name: str = "yelp_review_full", batch
     return train_dataloader, eval_dataloader
 
 
-def load_pretrained_model(name: str = "bert-base-cased", num_labels: int = 5):
+def load_pretrained_model(name: str = "roberta-large", num_labels: int = 2):
     return FlaxAutoModelForSequenceClassification.from_pretrained(name, num_labels=num_labels)
 
 
 def main(args):
     seed = 0xFFFF
-    lr = 1e-4
+    lr = 1e-5
     scale = 1e-3
-    epochs = 3
-    batch_size = 128
+    epochs = 10
+    batch_size = 64
     num_workers = 8
 
     use_mezo = True
@@ -91,7 +101,6 @@ def main(args):
     key, subkey = jax.random.split(key)
     for _ in range(epochs):
         for batch in train_dataloader:
-            batch = overfit_batch
             key, subkey = jax.random.split(key)
             batch = {k: v.numpy() for k, v in batch.items()}
             loss, params, accuracy = train_step(params, batch, subkey)
