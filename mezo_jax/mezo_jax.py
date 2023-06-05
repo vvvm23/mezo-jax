@@ -5,11 +5,8 @@ import jax
 from .utils import generate_key_tree
 
 
-# TODO: check if this is indeed done in place
 def perturb_parameters(params, scale, key):
-    key_tree = generate_key_tree(
-        key, target=params
-    )  # TODO: do we need to keep generating key tree? or can pass it around
+    key_tree = generate_key_tree(key, target=params)
     params = jax.tree_map(lambda p, k: p + scale * jax.random.normal(k, p.shape, dtype=p.dtype), params, key_tree)
     return params
 
