@@ -80,7 +80,7 @@ def main(args):
         accuracy = (outputs.logits.argmax(axis=-1) == labels).mean()
 
         if args.optimise_accuracy:
-            return accuracy, loss
+            return -accuracy, loss
         return loss, accuracy
 
     if use_mezo:
@@ -95,6 +95,7 @@ def main(args):
             values, grad = grad_loss_fn(params, args.scale, mezo_key, batch, labels)
             if args.optimise_accuracy:
                 accuracy, loss = values
+                accuracy = -accuracy
             else:
                 loss, accuracy = values
             scaled_grad = args.learning_rate * grad
