@@ -81,6 +81,6 @@ See `examples/` for example usage in fine-tuning large language models.
 - [ ] specify arbitrary parameters to exclude from updates
 - [ ] specify arbitrary parameters to compute gradient with respect to
 - [ ] example showing decoder-only model fine-tuning
-- [ ] example showing encoder-only model fine-tuning
-- [ ] example showing training on non-differentiable metric (like accuracy)
+- [X] example showing encoder-only model fine-tuning
+- [X] example showing training on non-differentiable metric (like accuracy)
 

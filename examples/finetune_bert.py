@@ -57,6 +57,7 @@ def load_pretrained_model(name: str = "roberta-large", num_labels: int = 3):
 def main(args):
     use_mezo = not args.disable_mezo
     dataset_name = args.dataset_name if args.subset is None else (args.dataset_name, args.subset)
+    assert not args.optimise_accuracy or not args.disable_mezo, "Cannot optimise for accuracy without MeZo enabled"
 
     key = jax.random.PRNGKey(args.seed)
     tokenizer = load_tokenizer()
@@ -78,6 +79,8 @@ def main(args):
         ).mean()
         accuracy = (outputs.logits.argmax(axis=-1) == labels).mean()
 
+        if args.optimise_accuracy:
+            return accuracy, loss
         return loss, accuracy
 
     if use_mezo:
@@ -89,7 +92,11 @@ def main(args):
     def train_step(params, batch, mezo_key):
         labels = batch.pop("label")
         if use_mezo:
-            (loss, accuracy), grad = grad_loss_fn(params, args.scale, mezo_key, batch, labels)
+            values, grad = grad_loss_fn(params, args.scale, mezo_key, batch, labels)
+            if args.optimise_accuracy:
+                accuracy, loss = values
+            else:
+                loss, accuracy = values
             scaled_grad = args.learning_rate * grad
             return loss, apply_updates(params, scaled_grad, mezo_key), accuracy
         else:
@@ -135,5 +142,6 @@ if __name__ == "__main__":
     parser.add_argument("--bfloat16", action="store_true")
     parser.add_argument("--disable_mezo", action="store_true")
     parser.add_argument("--print_freq", type=int, default=10)
+    parser.add_argument("--optimise_accuracy", action="store_true")
     args = parser.parse_args()
     main(args)
