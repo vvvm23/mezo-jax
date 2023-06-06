@@ -9,7 +9,9 @@ Passes"
 
 This library adds functional transforms that take an input function `fn(params,
 ...)` and transforms it into one that computes the approximate gradient with
-respect to `params` via a memory-efficient, zeroth-order (MeZO) method.
+respect to `params` via a memory-efficient, zeroth-order (MeZO) method. This
+allows for fine-tuning of models using only model forward passes, significantly
+reducing the memory required.
 
 See [the original paper](https://arxiv.org/abs/2305.17333) for more details on
 this method.
@@ -76,6 +78,7 @@ See `examples/` for example usage in fine-tuning large language models.
 ---
 
 ### TODO
+- [ ] specify arbitrary parameters to exclude from updates
 - [ ] specify arbitrary parameters to compute gradient with respect to
 - [ ] example showing decoder-only model fine-tuning
 - [ ] example showing encoder-only model fine-tuning
