@@ -1,4 +1,5 @@
-from typing import Optional
+import argparse
+from typing import Optional, Tuple, Union
 
 import datasets
 import jax
@@ -10,8 +11,6 @@ from transformers import AutoTokenizer, FlaxAutoModelForSequenceClassification
 
 from mezo_jax import apply_updates, mezo_value_and_grad
 
-# Mostly following this tutorial https://huggingface.co/docs/transformers/training
-
 
 def load_tokenizer(name: str = "roberta-large"):
     tokenizer = AutoTokenizer.from_pretrained(name)
@@ -20,7 +19,7 @@ def load_tokenizer(name: str = "roberta-large"):
 
 def load_dataset(
     tokenizer: AutoTokenizer,
-    name: str = ("glue", "cola"),
+    name: Union[str, Tuple[str, str]] = ("glue", "mnli"),
     batch_size: int = 16,
     num_workers: int = 4,
     max_length: Optional[int] = 128,
@@ -32,39 +31,44 @@ def load_dataset(
     dataset = datasets.load_dataset(*name)
 
     def tokenize_function(examples):
-        return tokenizer(examples["sentence"], padding="max_length", truncation=True, max_length=max_length)
+        label = examples.pop("label")
+        return {
+            "label": label,
+            **tokenizer(*examples.values(), padding="max_length", truncation=True, max_length=max_length),
+        }
 
-    dataset = dataset.map(tokenize_function, batched=True, remove_columns=["sentence", "idx"])
+    dataset = dataset.remove_columns("idx")
+    dataset = dataset.map(tokenize_function, batched=True, remove_columns=dataset["train"].column_names)
     dataset.set_format("torch")
 
-    train_dataloader = DataLoader(dataset["train"], shuffle=True, batch_size=batch_size, num_workers=num_workers)
-    eval_dataloader = DataLoader(dataset["test"], shuffle=False, batch_size=batch_size, num_workers=num_workers)
+    train_dataloader = DataLoader(
+        dataset["train"], shuffle=True, batch_size=batch_size, num_workers=num_workers, drop_last=True
+    )
+    # eval_dataloader = DataLoader(dataset["test"], shuffle=False, batch_size=batch_size, num_workers=num_workers)
 
-    return train_dataloader, eval_dataloader
+    # return train_dataloader, eval_dataloader
+    return train_dataloader, dataset["train"]
 
 
-def load_pretrained_model(name: str = "roberta-large", num_labels: int = 2):
+def load_pretrained_model(name: str = "roberta-large", num_labels: int = 3):
     return FlaxAutoModelForSequenceClassification.from_pretrained(name, num_labels=num_labels)
 
 
 def main(args):
-    seed = 0xFFFF
-    lr = 1e-5
-    scale = 1e-3
-    epochs = 10
-    batch_size = 64
-    num_workers = 8
+    use_mezo = not args.disable_mezo
+    dataset_name = args.dataset_name if args.subset is None else (args.dataset_name, args.subset)
 
-    use_mezo = True
-    use_bfloat16 = True
-
-    key = jax.random.PRNGKey(seed)
+    key = jax.random.PRNGKey(args.seed)
     tokenizer = load_tokenizer()
-    train_dataloader, eval_dataloader = load_dataset(tokenizer, batch_size=batch_size, num_workers=num_workers)
-    model = load_pretrained_model()
+    train_dataloader, train_dataset = load_dataset(
+        tokenizer, dataset_name, batch_size=args.batch_size, num_workers=args.num_workers, max_length=args.max_length
+    )
+    num_labels = train_dataset.features["label"].num_classes
+
+    model = load_pretrained_model(num_labels=num_labels)
 
     params = model.params
-    if use_bfloat16:
+    if args.bfloat16:
         params = jax.tree_map(lambda p: jnp.asarray(p, dtype=jnp.bfloat16), params)
 
     def loss_fn(params, batch, labels):
@@ -85,21 +89,20 @@ def main(args):
     def train_step(params, batch, mezo_key):
         labels = batch.pop("label")
         if use_mezo:
-            (loss, accuracy), grad = grad_loss_fn(params, scale, mezo_key, batch, labels)
-            scaled_grad = lr * grad
+            (loss, accuracy), grad = grad_loss_fn(params, args.scale, mezo_key, batch, labels)
+            scaled_grad = args.learning_rate * grad
             return loss, apply_updates(params, scaled_grad, mezo_key), accuracy
         else:
             (loss, accuracy), grad = grad_loss_fn(params, batch, labels)
-            return loss, jax.tree_map(lambda p, u: p - lr * u, params, grad), accuracy
+            return loss, jax.tree_map(lambda p, u: p - args.learning_rate * u, params, grad), accuracy
 
-    pb = tqdm(range(epochs * len(train_dataloader)))
+    pb = tqdm(range(args.epochs * len(train_dataloader)))
 
     total_loss, total_accuracy = 0.0, 0.0
     steps = 0
-    freq = 10
 
     key, subkey = jax.random.split(key)
-    for _ in range(epochs):
+    for _ in range(args.epochs):
         for batch in train_dataloader:
             key, subkey = jax.random.split(key)
             batch = {k: v.numpy() for k, v in batch.items()}
@@ -107,8 +110,10 @@ def main(args):
 
             total_loss += loss.item()
             total_accuracy += accuracy.item()
-            if steps % freq == 0:
-                pb.set_description(f"loss: {total_loss / freq} ~ accuracy: {100 * total_accuracy / freq}")
+            if steps % args.print_freq == 0:
+                pb.set_description(
+                    f"loss: {total_loss / args.print_freq} ~ accuracy: {100 * total_accuracy / args.print_freq}"
+                )
                 total_loss = 0.0
                 total_accuracy = 0.0
 
@@ -117,5 +122,18 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # TODO: add proper argument handling
-    main(None)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset_name", type=str, default="glue")
+    parser.add_argument("--subset", type=str, default=None)
+    parser.add_argument("--seed", type=int, default=0xFFFF)
+    parser.add_argument("--learning_rate", type=float, default=1e-5)
+    parser.add_argument("--scale", type=float, default=1e-3)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--max_length", type=int, default=128)
+    parser.add_argument("--bfloat16", action="store_true")
+    parser.add_argument("--disable_mezo", action="store_true")
+    parser.add_argument("--print_freq", type=int, default=10)
+    args = parser.parse_args()
+    main(args)
