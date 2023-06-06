@@ -80,6 +80,8 @@ See `examples/` for example usage in fine-tuning large language models.
 ### TODO
 - [ ] specify arbitrary parameters to exclude from updates
 - [ ] specify arbitrary parameters to compute gradient with respect to
+- [ ] `n` step gradient approximation
+- [ ] MeZO Adam computation
 - [ ] example showing decoder-only model fine-tuning
 - [X] example showing encoder-only model fine-tuning
 - [X] example showing training on non-differentiable metric (like accuracy)
