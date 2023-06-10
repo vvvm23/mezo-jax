@@ -18,7 +18,7 @@ this method.
 
 ## Installation
 
-Install using `pip install git+https://github.com/vvvm23/lora-jax` or navigate
+Install using `pip install git+https://github.com/vvvm23/mezo-jax` or navigate
 to root of repository and run `pip install .`
 
 ## Usage
