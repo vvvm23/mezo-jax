@@ -26,7 +26,7 @@ to root of repository and run `pip install .`
 Suppose we have a function we want to compute an approximate gradient for:
 ```python
 def fn(params, x):
-    y = x @ params['w'] = params['b']
+    y = x @ params['w'] + params['b']
     return (y**2).mean()
 ```
 
